@@ -1,0 +1,13 @@
+# Core packages for object detection
+pip install ultralytics           
+pip install opencv-python         
+pip install torch torchvision     
+
+# Web server packages
+pip install flask                
+pip install flask-cors           
+pip install numpy                
+
+# Optional but recommended
+pip install pyyaml               
+pip install Pillow               
