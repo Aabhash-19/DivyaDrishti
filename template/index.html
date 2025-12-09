@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DivyaDrishti - Object Detection</title>
+    <style>
+        body { margin: 20px; font-family: Arial; }
+        .container { max-width: 800px; margin: auto; }
+        .video-container { text-align: center; margin: 20px 0; }
+        #videoFeed { border: 2px solid #333; max-width: 100%; }
+        .info { background: #f0f0f0; padding: 15px; border-radius: 5px; margin: 10px 0; }
+        .detections { background: white; padding: 15px; border: 1px solid #ddd; }
+        .detection-item { padding: 5px; border-bottom: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>DivyaDrishti - Object Detection</h1>
+        
+        <div class="info" id="modelInfo">
+            Loading model information...
+        </div>
+        
+        <div class="video-container">
+            <img id="videoFeed" src="{{ url_for('video_feed') }}">
+        </div>
+        
+        <div class="detections">
+            <h3>Detected Objects:</h3>
+            <div id="detectionsList">No objects detected</div>
+        </div>
+    </div>
+
+    <script>
+        // Update detections every second
+        setInterval(async () => {
+            try {
+                const response = await fetch('/detections');
+                const data = await response.json();
+                const list = document.getElementById('detectionsList');
+                
+                if (data.detections.length > 0) {
+                    list.innerHTML = data.detections.map(d => 
+                        `<div class="detection-item">${d}</div>`
+                    ).join('');
+                } else {
+                    list.innerHTML = 'No objects detected';
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }, 1000);
+
+        // Load model info
+        fetch('/model_info').then(r => r.json()).then(data => {
+            document.getElementById('modelInfo').innerHTML = 
+                `Model: ${data.model} | GPU: ${data.gpu} | Classes: ${data.classes}`;
+        });
+    </script>
+</body>
+</html>
