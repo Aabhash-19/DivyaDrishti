@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DivyaDrishti - Delayed Object Detection</title>
+    <style>
+        body { 
+            margin: 20px; 
+            font-family: Arial, sans-serif; 
+            background: #f5f5f5;
+        }
+        .container { 
+            max-width: 1000px; 
+            margin: auto; 
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #4CAF50;
+        }
+        .video-container { 
+            text-align: center; 
+            margin: 20px 0; 
+        }
+        #videoFeed { 
+            border: 2px solid #333; 
+            max-width: 100%; 
+            border-radius: 5px;
+            background: #000;
+        }
+        .info { 
+            background: #e8f4fd; 
+            padding: 15px; 
+            border-radius: 5px; 
+            margin: 15px 0;
+            border-left: 4px solid #2196F3;
+        }
+        .delay-info {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            border-left: 4px solid #ffc107;
+        }
+        .stats { 
+            background: #f0f7ff; 
+            padding: 15px; 
+            border-radius: 5px; 
+            margin: 15px 0;
+            border-left: 4px solid #4CAF50;
+        }
+        .detections { 
+            background: white; 
+            padding: 20px; 
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        .detection-item { 
+            padding: 12px; 
+            margin: 8px 0;
+            border-radius: 5px;
+            border-left: 4px solid #4CAF50;
+            background: #e8f5e9;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .detection-item.confirmed {
+            background: #e8f5e9;
+            border-left: 4px solid #4CAF50;
+        }
+        .detection-item.pending {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+        }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            margin: 15px 0;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .status-item {
+            background: #f0f0f0;
+            padding: 12px;
+            border-radius: 5px;
+            flex: 1;
+            min-width: 200px;
+            text-align: center;
+        }
+        .progress-container {
+            margin: 15px 0;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            height: 20px;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #ff5252, #ffeb3b, #4CAF50);
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #000;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        button {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #0b7dda;
+        }
+        .legend {
+            display: flex;
+            justify-content: center;
+            margin: 20px 0;
+            gap: 25px;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            border: 1px solid #ddd;
+        }
+        .tentative {
+            background: #ffc107;
+        }
+        .confirmed {
+            background: #4CAF50;
+        }
+        .timer {
+            font-family: monospace;
+            background: #333;
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        h3 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 8px;
+            margin-top: 0;
+        }
+        .delay-notice {
+            text-align: center;
+            font-style: italic;
+            color: #666;
+            margin: 10px 0;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 DivyaDrishti - Delayed Object Detection</h1>
+            <p>Hold objects steady for 3 seconds for detection confirmation</p>
+        </div>
+        
+        <div class="delay-info" id="delayInfo">
+            <h3>⏰ Detection Delay: <span id="delayTime">3</span> seconds</h3>
+            <div class="progress-container">
+                <div class="progress-bar" id="detectionProgress" style="width: 0%">
+                    <span id="progressText">0%</span>
+                </div>
+            </div>
+            <p id="delayMessage">Hold object in frame to start detection timer...</p>
+        </div>
+        
+        <div class="status-bar">
+            <div class="status-item" id="streamStatus">
+                <strong>Stream Status:</strong> <span id="statusText">Checking...</span>
+            </div>
+            <div class="status-item" id="trackingStatus">
+                <strong>Objects Tracking:</strong> <span id="trackingCount">0</span>
+            </div>
+            <div class="status-item" id="detectionStatus">
+                <strong>Confirmed Detections:</strong> <span id="detectedCount">0</span>
+            </div>
+        </div>
+        
+        <div class="video-container">
+            <img id="videoFeed" src="{{ url_for('video_feed') }}">
+        </div>
+        
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color tentative"></div>
+                <span>Tentative (Waiting for 3s delay)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color confirmed"></div>
+                <span>Confirmed (Visible for 3+ seconds)</span>
+            </div>
+        </div>
+        
+        <div class="stats" id="detectionStats">
+            <h3>📊 Detection Statistics</h3>
+            <div id="statsContent">
+                <p>Waiting for object detection data...</p>
+                <div id="timersContainer"></div>
+            </div>
+        </div>
+        
+        <div class="detections">
+            <h3>✅ Confirmed Objects Detected:</h3>
+            <div class="delay-notice" id="delayNotice">
+                Objects need to be held steady for 3 seconds before appearing here
+            </div>
+            <div id="detectionsList">
+                <div class="detection-item pending">
+                    No confirmed objects yet. Hold objects steady for 3 seconds.
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button onclick="resetTracking()">🔄 Reset Object Tracking</button>
+            <button onclick="refreshPage()">🔄 Refresh Page</button>
+        </div>
+    </div>
+
+    <script>
+        let delaySeconds = 3.0;
+        let trackingTimers = {};
+        
+        // Load model info with delay settings
+        fetch('/model_info')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const modelInfo = document.getElementById('modelInfo');
+                    if (!modelInfo) {
+                        // Create model info div if it doesn't exist
+                        const container = document.querySelector('.container');
+                        const infoDiv = document.createElement('div');
+                        infoDiv.className = 'info';
+                        infoDiv.id = 'modelInfo';
+                        infoDiv.innerHTML = `
+                            <strong>Model:</strong> ${data.model} | 
+                            <strong>Classes:</strong> ${data.classes_count} |
+                            <strong>Detection Delay:</strong> ${data.detection_settings?.delay_seconds || 3}s |
+                            <strong>Confidence Threshold:</strong> ${data.detection_settings?.min_confidence || 0.5}
+                        `;
+                        container.insertBefore(infoDiv, container.firstChild.nextSibling);
+                    } else {
+                        modelInfo.innerHTML = `
+                            <strong>Model:</strong> ${data.model} | 
+                            <strong>Classes:</strong> ${data.classes_count} |
+                            <strong>Detection Delay:</strong> ${data.detection_settings?.delay_seconds || 3}s |
+                            <strong>Confidence Threshold:</strong> ${data.detection_settings?.min_confidence || 0.5}
+                        `;
+                    }
+                    
+                    // Set delay time
+                    if (data.detection_settings?.delay_seconds) {
+                        delaySeconds = data.detection_settings.delay_seconds;
+                        document.getElementById('delayTime').textContent = delaySeconds;
+                    }
+                }
+            });
+
+        // Update status every second
+        async function updateStatus() {
+            try {
+                const statusResponse = await fetch('/status');
+                const statusData = await statusResponse.json();
+                
+                // Update stream status
+                const statusText = document.getElementById('statusText');
+                if (statusData.streaming) {
+                    statusText.innerHTML = '<span style="color:green">🟢 LIVE</span>';
+                } else {
+                    statusText.innerHTML = '<span style="color:red">🔴 OFFLINE</span>';
+                }
+                
+                // Update tracking count
+                document.getElementById('trackingCount').textContent = statusData.objects_tracking || 0;
+                document.getElementById('detectedCount').textContent = statusData.detections_count || 0;
+                
+                // Update progress based on tracking
+                const progressPercent = statusData.objects_tracking > 0 ? 30 : 0;
+                const progressBar = document.getElementById('detectionProgress');
+                const progressText = document.getElementById('progressText');
+                
+                progressBar.style.width = `${progressPercent}%`;
+                progressText.textContent = `${progressPercent}%`;
+                
+                // Update delay message
+                const delayMessage = document.getElementById('delayMessage');
+                if (statusData.objects_tracking > 0) {
+                    delayMessage.innerHTML = `<span style="color:#ff9800">⏳ ${statusData.objects_tracking} object(s) being tracked... Hold steady!</span>`;
+                } else {
+                    delayMessage.textContent = 'Hold object in frame to start detection timer...';
+                }
+                
+            } catch (error) {
+                console.error('Status update error:', error);
+            }
+        }
+
+        // Update detections every second
+        async function updateDetections() {
+            try {
+                const response = await fetch('/detections');
+                const data = await response.json();
+                const list = document.getElementById('detectionsList');
+                const stats = document.getElementById('statsContent');
+                const delayNotice = document.getElementById('delayNotice');
+                
+                if (data.success) {
+                    // Hide/show delay notice
+                    if (data.detections.length > 0) {
+                        delayNotice.style.display = 'none';
+                    } else {
+                        delayNotice.style.display = 'block';
+                    }
+                    
+                    // Format detections list
+                    if (data.detections.length > 0) {
+                        list.innerHTML = data.detections.map(det => 
+                            `<div class="detection-item confirmed">
+                                <strong>${det.class}</strong> 
+                                <span style="float:right">Confidence: ${(det.confidence * 100).toFixed(1)}%</span><br>
+                                <small>Visible for: ${det.visible_for || 3}+ seconds</small>
+                            </div>`
+                        ).join('');
+                        
+                        // Update progress bar to 100% when objects detected
+                        document.getElementById('detectionProgress').style.width = '100%';
+                        document.getElementById('progressText').textContent = '100%';
+                    } else {
+                        list.innerHTML = '<div class="detection-item pending">No confirmed objects yet. Hold objects steady for ' + delaySeconds + ' seconds.</div>';
+                    }
+                    
+                    // Update statistics
+                    const now = new Date();
+                    stats.innerHTML = `
+                        <p><strong>Confirmed Objects:</strong> ${data.count || 0}</p>
+                        <p><strong>Detection Delay:</strong> ${data.settings?.detection_delay || delaySeconds} seconds</p>
+                        <p><strong>Last Update:</strong> ${now.toLocaleTimeString()}</p>
+                        <p><strong>Settings:</strong> ${delaySeconds}s delay, Confidence ≥${data.settings?.min_confidence || 0.5}</p>
+                    `;
+                }
+            } catch (error) {
+                console.error('Detections update error:', error);
+                document.getElementById('detectionsList').innerHTML = 
+                    '<div class="detection-item pending">Error loading detections. Check server connection.</div>';
+            }
+        }
+
+        // Reset tracking function
+        async function resetTracking() {
+            try {
+                const response = await fetch('/reset_tracking');
+                const data = await response.json();
+                if (data.success) {
+                    alert('Object tracking reset successfully!');
+                    updateStatus();
+                    updateDetections();
+                }
+            } catch (error) {
+                console.error('Reset tracking error:', error);
+            }
+        }
+
+        // Refresh page
+        function refreshPage() {
+            location.reload();
+        }
+
+        // Simulate timer for demo purposes
+        function simulateTimer() {
+            const timersContainer = document.getElementById('timersContainer');
+            if (!timersContainer) return;
+            
+            // This is just for demo - in real implementation, timers would come from server
+            const demoObjects = ['person', 'cup', 'phone'];
+            let html = '<h4>Active Timers:</h4>';
+            
+            demoObjects.forEach(obj => {
+                const randomTime = (Math.random() * delaySeconds).toFixed(1);
+                const percent = (randomTime / delaySeconds * 100).toFixed(0);
+                html += `
+                    <div style="margin: 5px 0;">
+                        <strong>${obj}:</strong> ${randomTime}s / ${delaySeconds}s
+                        <div style="background:#e0e0e0; height:10px; border-radius:5px; margin:2px 0;">
+                            <div style="background:#4CAF50; height:100%; width:${percent}%; border-radius:5px;"></div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            timersContainer.innerHTML = html;
+        }
+
+        // Set up periodic updates
+        setInterval(updateStatus, 1000);
+        setInterval(updateDetections, 1000);
+        setInterval(simulateTimer, 2000);
+        
+        // Initial updates
+        updateStatus();
+        updateDetections();
+        
+        // Update FPS counter
+        let frameCount = 0;
+        setInterval(() => {
+            document.getElementById('fpsCount').textContent = frameCount;
+            frameCount = 0;
+        }, 1000);
+        
+        const videoFeed = document.getElementById('videoFeed');
+        if (videoFeed) {
+            videoFeed.onload = () => {
+                frameCount++;
+            };
+        }
+    </script>
+</body>
+</html>
