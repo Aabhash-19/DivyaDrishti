@@ -1,0 +1,7 @@
+# For using QPython+
+pip install requests            
+pip install numpy              
+pip install opencv-python
+
+# For streaming purpose
+pip install requests
