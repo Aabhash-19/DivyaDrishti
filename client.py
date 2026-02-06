@@ -6,7 +6,7 @@ print("==================================")
 
 
 IP_WEBCAM_URL = "http://192.168.1.10:8080/shot.jpg"
-LAPTOP_URL = "http://192.168.1.23:5001/upload"
+LAPTOP_URL = "http://10.90.19.240:5001/upload"
 
 print(f"📱 IP Webcam: {IP_WEBCAM_URL}")
 print(f"💻 Laptop: {LAPTOP_URL}")

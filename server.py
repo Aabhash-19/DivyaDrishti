@@ -8,6 +8,8 @@ import base64
 from ultralytics import YOLO
 import json
 from collections import defaultdict, deque
+import pyttsx3
+from queue import Queue
 
 app = Flask(__name__)
 
@@ -25,6 +27,120 @@ MIN_CONFIDENCE = 0.5   # Minimum confidence threshold
 last_processing_time = 0
 processing_interval = 0.5  # Process detections every 0.5 seconds
 
+# TTS Configuration
+TTS_ENABLED = True  # Enable/disable TTS globally
+TTS_RATE = 200  # Speech rate (words per minute) - higher for sweeter, higher pitch
+TTS_VOLUME = 1.0  # Volume level (0.0 to 1.0) - maximum volume
+ANNOUNCEMENT_COOLDOWN = 10.0  # Seconds before re-announcing same object
+announced_objects = {}  # Track when objects were last announced
+
+# TTS Manager Class
+class TTSManager:
+    def __init__(self):
+        self.enabled = TTS_ENABLED
+        self.announcement_queue = Queue()
+        self.engine = None
+        self.worker_thread = None
+        self.running = False
+        self.lock = threading.Lock()
+        
+        # Initialize TTS engine in separate thread
+        self._start_worker()
+    
+    def _start_worker(self):
+        """Start the TTS worker thread"""
+        self.running = True
+        self.worker_thread = threading.Thread(target=self._announcement_worker, daemon=True)
+        self.worker_thread.start()
+    
+    def _announcement_worker(self):
+        """Worker thread that processes announcement queue"""
+        try:
+            # Initialize engine in this thread (pyttsx3 requirement)
+            self.engine = pyttsx3.init()
+            self.engine.setProperty('rate', TTS_RATE)
+            self.engine.setProperty('volume', TTS_VOLUME)
+            
+            # Try to set a better voice if available
+            voices = self.engine.getProperty('voices')
+            if voices:
+                # Try to find the sweetest female voice
+                # On macOS: 0=Alex(male), 1=Alice, 17=Samantha, 35=Victoria
+                # Alice is usually sweeter than Samantha
+                preferred_voices = ['Samantha', 'Victoria', 'Fiona', 'Alice']
+                selected_voice = None
+                
+                # Try to find preferred voice by name
+                for pref in preferred_voices:
+                    for voice in voices:
+                        if pref.lower() in voice.name.lower():
+                            selected_voice = voice
+                            break
+                    if selected_voice:
+                        break
+                
+                # Fallback to female voice (index 1)
+                if not selected_voice and len(voices) > 1:
+                    selected_voice = voices[1]
+                elif not selected_voice:
+                    selected_voice = voices[0]
+                
+                self.engine.setProperty('voice', selected_voice.id)
+                print(f"🔊 Using voice: {selected_voice.name}")
+            
+            print("🔊 TTS engine initialized")
+            
+            while self.running:
+                try:
+                    # Wait for announcement with timeout
+                    if not self.announcement_queue.empty():
+                        text = self.announcement_queue.get(timeout=0.1)
+                        if text and self.enabled:
+                            print(f"🔊 Announcing: {text}")
+                            self.engine.say(text)
+                            self.engine.runAndWait()
+                    else:
+                        time.sleep(0.1)
+                except Exception as e:
+                    print(f"TTS worker error: {e}")
+                    time.sleep(0.1)
+        except Exception as e:
+            print(f"❌ Failed to initialize TTS engine: {e}")
+            self.enabled = False
+    
+    def announce(self, text):
+        """Add announcement to queue"""
+        if self.enabled and text:
+            self.announcement_queue.put(text)
+    
+    def toggle(self, enabled=None):
+        """Enable or disable TTS"""
+        with self.lock:
+            if enabled is None:
+                self.enabled = not self.enabled
+            else:
+                self.enabled = enabled
+            return self.enabled
+    
+    def set_rate(self, rate):
+        """Set speech rate"""
+        if self.engine:
+            self.engine.setProperty('rate', rate)
+    
+    def set_volume(self, volume):
+        """Set volume (0.0 to 1.0)"""
+        if self.engine:
+            self.engine.setProperty('volume', max(0.0, min(1.0, volume)))
+    
+    def shutdown(self):
+        """Shutdown TTS engine"""
+        self.running = False
+        if self.worker_thread:
+            self.worker_thread.join(timeout=2)
+
+# Initialize TTS Manager
+tts_manager = TTSManager()
+
 # Load YOLOv8 model
 try:
     model = YOLO('yolov8n.pt')
@@ -33,6 +149,66 @@ try:
 except Exception as e:
     print(f"❌ Failed to load YOLOv8 model: {e}")
     model = None
+
+def generate_announcement(confirmed_detections, current_time):
+    """Generate natural language announcement for confirmed detections"""
+    global announced_objects
+    
+    if not confirmed_detections:
+        return None
+    
+    # Filter objects that need announcement (not recently announced)
+    objects_to_announce = []
+    for det in confirmed_detections:
+        class_name = det['class']
+        
+        # Check if this object should be announced
+        if class_name not in announced_objects:
+            # First time seeing this object
+            objects_to_announce.append(class_name)
+            announced_objects[class_name] = current_time
+        elif current_time - announced_objects[class_name] > ANNOUNCEMENT_COOLDOWN:
+            # Cooldown period expired, re-announce
+            objects_to_announce.append(class_name)
+            announced_objects[class_name] = current_time
+    
+    # Clean up announced_objects for objects no longer detected
+    detected_classes = {det['class'] for det in confirmed_detections}
+    for class_name in list(announced_objects.keys()):
+        if class_name not in detected_classes:
+            # Object disappeared, remove from history
+            if current_time - announced_objects[class_name] > 5.0:
+                del announced_objects[class_name]
+    
+    if not objects_to_announce:
+        return None
+    
+    # Count objects by class
+    object_counts = {}
+    for cls in objects_to_announce:
+        object_counts[cls] = object_counts.get(cls, 0) + 1
+    
+    # Generate natural language
+    parts = []
+    for cls, count in object_counts.items():
+        if count == 1:
+            parts.append(cls)
+        elif count == 2:
+            parts.append(f"two {cls}s")
+        elif count == 3:
+            parts.append(f"three {cls}s")
+        else:
+            parts.append(f"{count} {cls}s")
+    
+    # Construct announcement (without 'detected')
+    if len(parts) == 0:
+        return None
+    elif len(parts) == 1:
+        return parts[0]
+    elif len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    else:
+        return f"{', '.join(parts[:-1])}, and {parts[-1]}"
 
 def detect_objects(frame):
     """Run YOLO object detection on frame with 3-second delay"""
@@ -110,6 +286,14 @@ def detect_objects(frame):
                         })
             
             last_processing_time = current_time
+            
+            # Generate and trigger TTS announcement
+            announcement = generate_announcement(confirmed_detections, current_time)
+            if announcement:
+                print(f"📢 Generated announcement: {announcement}")
+                tts_manager.announce(announcement)
+            elif confirmed_detections:
+                print(f"⚠️ Confirmed detections but no announcement: {[d['class'] for d in confirmed_detections]}")
         
         # Draw confirmed objects with different style
         for det in confirmed_detections:
@@ -324,6 +508,73 @@ def reset_tracking():
         'tracking_count': 0
     })
 
+@app.route('/tts/toggle', methods=['POST'])
+def tts_toggle():
+    """Toggle TTS on/off"""
+    try:
+        data = request.get_json() or {}
+        enabled = data.get('enabled')
+        
+        new_state = tts_manager.toggle(enabled)
+        
+        return jsonify({
+            'success': True,
+            'tts_enabled': new_state,
+            'message': f"TTS {'enabled' if new_state else 'disabled'}"
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'success': False}), 500
+
+@app.route('/tts/settings', methods=['GET', 'POST'])
+def tts_settings():
+    """Get or update TTS settings"""
+    if request.method == 'GET':
+        return jsonify({
+            'success': True,
+            'settings': {
+                'enabled': tts_manager.enabled,
+                'rate': TTS_RATE,
+                'volume': TTS_VOLUME,
+                'announcement_cooldown': ANNOUNCEMENT_COOLDOWN
+            }
+        })
+    else:
+        try:
+            data = request.get_json() or {}
+            
+            if 'rate' in data:
+                tts_manager.set_rate(data['rate'])
+            if 'volume' in data:
+                tts_manager.set_volume(data['volume'])
+            
+            return jsonify({
+                'success': True,
+                'message': 'TTS settings updated',
+                'settings': {
+                    'enabled': tts_manager.enabled,
+                    'rate': data.get('rate', TTS_RATE),
+                    'volume': data.get('volume', TTS_VOLUME)
+                }
+            })
+        except Exception as e:
+            return jsonify({'error': str(e), 'success': False}), 500
+
+@app.route('/tts/test', methods=['POST'])
+def tts_test():
+    """Test TTS with custom text"""
+    try:
+        data = request.get_json() or {}
+        text = data.get('text', 'Text to speech is working correctly')
+        
+        tts_manager.announce(text)
+        
+        return jsonify({
+            'success': True,
+            'message': f"Announced: {text}"
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'success': False}), 500
+
 if __name__ == '__main__':
     # YOUR SPECIFIC IP ADDRESS
     ip = "10.90.19.240"
@@ -339,6 +590,10 @@ if __name__ == '__main__':
     print(f"   Objects need {DETECTION_DELAY} seconds of visibility")
     print(f"   Hold objects steady for detection")
     print("=" * 60)
+    print("🔊 TEXT-TO-SPEECH ENABLED")
+    print(f"   TTS Status: {'ON' if TTS_ENABLED else 'OFF'}")
+    print(f"   Announcement cooldown: {ANNOUNCEMENT_COOLDOWN}s")
+    print("=" * 60)
     print("📡 Available endpoints:")
     print(f"   Home:           http://{ip}:{port}/")
     print(f"   Video stream:   http://{ip}:{port}/video_feed")
@@ -347,6 +602,9 @@ if __name__ == '__main__':
     print(f"   Model info:     http://{ip}:{port}/model_info")
     print(f"   Reset tracking: http://{ip}:{port}/reset_tracking")
     print(f"   Status:         http://{ip}:{port}/status")
+    print(f"   TTS Toggle:     http://{ip}:{port}/tts/toggle (POST)")
+    print(f"   TTS Settings:   http://{ip}:{port}/tts/settings (GET/POST)")
+    print(f"   TTS Test:       http://{ip}:{port}/tts/test (POST)")
     print("=" * 60)
     print("📱 Use this URL in your phone client:")
     print(f"   http://{ip}:{port}")
