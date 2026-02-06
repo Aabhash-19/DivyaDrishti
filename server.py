@@ -31,7 +31,7 @@ processing_interval = 0.5  # Process detections every 0.5 seconds
 TTS_ENABLED = True  # Enable/disable TTS globally
 TTS_RATE = 200  # Speech rate (words per minute) - higher for sweeter, higher pitch
 TTS_VOLUME = 1.0  # Volume level (0.0 to 1.0) - maximum volume
-ANNOUNCEMENT_COOLDOWN = 10.0  # Seconds before re-announcing same object
+ANNOUNCEMENT_COOLDOWN = 4.0  # Seconds before re-announcing same object
 announced_objects = {}  # Track when objects were last announced
 
 # TTS Manager Class

@@ -1,0 +1,120 @@
+/* ============================================
+   Dark Mode Specific Styles
+   ============================================ */
+
+[data-theme="dark"] {
+    /* Enhanced dark mode shadows */
+    --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+/* Dark Mode Glass Cards */
+[data-theme="dark"] .glass-card {
+    background: rgba(30, 41, 59, 0.5);
+    border-color: rgba(148, 163, 184, 0.1);
+}
+
+[data-theme="dark"] .glass-card:hover {
+    background: rgba(30, 41, 59, 0.7);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+/* Dark Mode Buttons */
+[data-theme="dark"] .btn-secondary {
+    background: rgba(30, 41, 59, 0.8);
+    border-color: rgba(148, 163, 184, 0.2);
+}
+
+[data-theme="dark"] .btn-secondary:hover {
+    background: rgba(30, 41, 59, 1);
+}
+
+/* Dark Mode Stats */
+[data-theme="dark"] .stat-card {
+    background: rgba(30, 41, 59, 0.6);
+}
+
+/* Dark Mode Detection Cards */
+[data-theme="dark"] .detection-card {
+    background: rgba(30, 41, 59, 0.6);
+    border-color: rgba(148, 163, 184, 0.1);
+}
+
+/* Dark Mode Video Container */
+[data-theme="dark"] .video-container::before {
+    opacity: 0.8;
+}
+
+/* Dark Mode Slider */
+[data-theme="dark"] .slider {
+    background: rgba(30, 41, 59, 0.8);
+}
+
+/* Neon Accents in Dark Mode */
+[data-theme="dark"] .live-dot {
+    box-shadow: 0 0 10px var(--success-color);
+}
+
+[data-theme="dark"] .stat-value {
+    filter: brightness(1.2);
+}
+
+/* Enhanced Glow Effects in Dark Mode */
+[data-theme="dark"] .btn-primary {
+    box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+}
+
+[data-theme="dark"] .btn-primary:hover {
+    box-shadow: 0 8px 30px rgba(102, 126, 234, 0.6);
+}
+
+/* Dark Mode Toggle Button */
+.theme-toggle {
+    position: relative;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: var(--bg-glass);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-base);
+}
+
+.theme-toggle:hover {
+    transform: scale(1.1);
+    box-shadow: var(--shadow-md);
+}
+
+.theme-icon {
+    font-size: 1.5rem;
+    transition: transform var(--transition-base);
+}
+
+.theme-toggle.rotating .theme-icon {
+    animation: rotateIn 0.5s ease;
+}
+
+/* Sun Icon (Light Mode) */
+.sun-icon {
+    color: #f59e0b;
+}
+
+/* Moon Icon (Dark Mode) */
+.moon-icon {
+    color: #60a5fa;
+}
+
+/* Smooth Theme Transition */
+* {
+    transition: background-color var(--transition-base),
+        color var(--transition-base),
+        border-color var(--transition-base);
+}
+
+/* Prevent transition on page load */
+.no-transition * {
+    transition: none !important;
+}
