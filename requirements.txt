@@ -1,0 +1,22 @@
+# DivyaDrishti - Object Detection with TTS
+# Python Dependencies
+
+# Core Framework
+flask==3.0.0
+
+# Computer Vision
+opencv-python==4.8.1.78
+ultralytics==8.1.0
+
+# Utilities
+numpy==1.24.3
+requests==2.31.0
+
+# Text-to-Speech
+pyttsx3==2.90
+
+# Additional dependencies (installed automatically with above)
+# - torch (from ultralytics)
+# - torchvision (from ultralytics)
+# - pillow (from opencv/ultralytics)
+# - pyyaml (from ultralytics)
