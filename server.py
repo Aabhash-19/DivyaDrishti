@@ -19,11 +19,13 @@ latest_detections = []
 frame_lock = threading.Lock()
 is_streaming = False
 last_frame_time = 0
+active_model_name = 'general'  # 'general' or 'currency' — toggled via /set_model
 
 # NEW: Persistence tracking variables
 object_history = defaultdict(list)  # Track when objects were first seen
 DETECTION_DELAY = 3.0  # 3 seconds delay before confirming object
-MIN_CONFIDENCE = 0.5   # Minimum confidence threshold
+MIN_CONFIDENCE = 0.5   # Minimum confidence threshold (General Detection)
+CURRENCY_MIN_CONFIDENCE = 0.85  # Higher threshold for Currency Classification to avoid random noise predictions
 last_processing_time = 0
 processing_interval = 0.5  # Process detections every 0.5 seconds
 
@@ -141,14 +143,29 @@ class TTSManager:
 # Initialize TTS Manager
 tts_manager = TTSManager()
 
-# Load YOLOv8 model
+# Load YOLOv8 models
+models = {}
+
 try:
-    model = YOLO('yolov8n.pt')
-    print(f"✅ YOLOv8 model loaded. Classes: {len(model.names)}")
-    print(f"⏰ Detection delay: {DETECTION_DELAY} seconds")
+    models['general'] = YOLO('yolov8n.pt')
+    print(f"✅ YOLOv8 general model loaded. Classes: {len(models['general'].names)}")
 except Exception as e:
-    print(f"❌ Failed to load YOLOv8 model: {e}")
-    model = None
+    print(f"❌ Failed to load general YOLOv8 model: {e}")
+    models['general'] = None
+
+try:
+    models['currency'] = YOLO('currency_best.pt')
+    print(f"✅ YOLOv8 currency model loaded. Classes: {len(models['currency'].names)}")
+except Exception as e:
+    print(f"⚠️ Currency model not loaded (will detect currency via general model only): {e}")
+    models['currency'] = None
+
+# Build the set of class names the currency model knows about
+# This is used to decide when to auto-switch to currency model results
+CURRENCY_CLASSES = set()
+if models['currency'] is not None:
+    CURRENCY_CLASSES = set(v.lower() for v in models['currency'].names.values())
+    print(f"💰 Currency classes loaded: {CURRENCY_CLASSES}")
 
 def generate_announcement(confirmed_detections, current_time):
     """Generate natural language announcement for confirmed detections"""
@@ -211,44 +228,82 @@ def generate_announcement(confirmed_detections, current_time):
         return f"{', '.join(parts[:-1])}, and {parts[-1]}"
 
 def detect_objects(frame):
-    """Run YOLO object detection on frame with 3-second delay"""
-    global object_history, last_processing_time
+    """Run the selected model (general or currency) on the frame."""
+    global object_history, last_processing_time, active_model_name
     
+    model = models.get(active_model_name) or models.get('general')
     if model is None:
         return frame, []
     
     try:
-        # Run detection
+        current_time = time.time()
+        annotated_frame = frame.copy()
+        raw_detections = []
+
+        # Run the selected model
         results = model(frame)
         
-        # Extract raw detections
-        raw_detections = []
-        annotated_frame = frame.copy()
-        current_time = time.time()
-        
-        if results and results[0].boxes is not None:
-            # Draw all detections (for visualization)
+        # ── Case A: Object Detection Model (General YOLO) ──
+        if results and hasattr(results[0], 'boxes') and results[0].boxes is not None:
             annotated_frame = results[0].plot()
-            
-            # Extract detection data
             for box in results[0].boxes:
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 conf = box.conf[0].item()
                 cls_id = int(box.cls[0].item())
                 cls_name = model.names[cls_id]
-                
                 if conf >= MIN_CONFIDENCE:
                     raw_detections.append({
                         'class': cls_name,
                         'confidence': round(conf, 3),
-                        'bbox': [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
-                        'coords': (int(x1), int(y1), int(x2), int(y2))
+                        'bbox': [round(x1,1), round(y1,1), round(x2,1), round(y2,1)],
+                        'coords': (int(x1), int(y1), int(x2), int(y2)),
+                        'model_source': active_model_name
                     })
-        
-        # Process persistence tracking every processing_interval seconds
+                    
+        # ── Case B: Image Classification Model (Currency YOLO) ──
+        elif results and hasattr(results[0], 'probs') and results[0].probs is not None:
+            # IMPROVEMENT: Image classification models expect the target object to fill the frame.
+            # If we pass the full wide-angle camera view, a small note is scaled down too much, leading to poor accuracy (e.g. 20 vs 500).
+            # Fix: Crop the center of the frame (where the user naturally points) and only classify that Region of Interest (ROI).
+            h, w, _ = frame.shape
+            
+            # Define center 60% box as the "scanner area"
+            crop_w = int(w * 0.6)
+            crop_h = int(h * 0.6)
+            x1 = int((w - crop_w) / 2)
+            y1 = int((h - crop_h) / 2)
+            x2 = x1 + crop_w
+            y2 = y1 + crop_h
+            
+            roi = frame[y1:y2, x1:x2]
+            
+            # Run currency model ONLY on the cropped ROI
+            roi_results = model(roi, verbose=False)
+            
+            if roi_results and hasattr(roi_results[0], 'probs') and roi_results[0].probs is not None:
+                probs = roi_results[0].probs
+                top1_idx = probs.top1
+                conf = probs.top1conf.item()
+                cls_name = model.names[top1_idx]
+                
+                # Classification models *always* predict exactly one class, so we need a very strict confidence gate
+                if conf >= CURRENCY_MIN_CONFIDENCE:
+                    # The detection box is the scanner area itself
+                    raw_detections.append({
+                        'class': cls_name,
+                        'confidence': round(conf, 3),
+                        'bbox': [round(x1,1), round(y1,1), round(x2,1), round(y2,1)],
+                        'coords': (int(x1), int(y1), int(x2), int(y2)),
+                        'model_source': active_model_name
+                    })
+                
+                # Always draw the "scanner guide" box so the user knows where to put the note
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 255), 1, lineType=cv2.LINE_AA)
+                cv2.putText(annotated_frame, "Align note here", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        # Persistence tracking
         confirmed_detections = []
         if current_time - last_processing_time >= processing_interval:
-            # Update object history with current detections
             for det in raw_detections:
                 class_name = det['class']
                 if class_name not in object_history:
@@ -260,111 +315,101 @@ def detect_objects(frame):
                 else:
                     object_history[class_name]['last_seen'] = current_time
                     object_history[class_name]['count'] += 1
-            
-            # Check which objects have been visible for DETECTION_DELAY seconds
-            confirmed_classes = []
+
             for class_name, data in list(object_history.items()):
                 visibility_time = current_time - data['first_seen']
-                
-                # Remove if not seen in last 2 seconds
                 if current_time - data['last_seen'] > 2.0:
                     del object_history[class_name]
                     continue
-                
-                # Check if visible for required delay
                 if visibility_time >= DETECTION_DELAY:
-                    confirmed_classes.append(class_name)
-                    
-                    # Find corresponding bbox
-                    matching_det = next((d for d in raw_detections if d['class'] == class_name), None)
-                    if matching_det:
+                    matching = next((d for d in raw_detections if d['class'] == class_name), None)
+                    if matching:
                         confirmed_detections.append({
                             'class': class_name,
-                            'confidence': matching_det['confidence'],
-                            'bbox': matching_det['bbox'],
-                            'visible_for': round(visibility_time, 1)
+                            'confidence': matching['confidence'],
+                            'bbox': matching['bbox'],
+                            'visible_for': round(visibility_time, 1),
+                            'model_source': active_model_name
                         })
-            
+
             last_processing_time = current_time
-            
-            # Generate and trigger TTS announcement
             announcement = generate_announcement(confirmed_detections, current_time)
             if announcement:
-                print(f"📢 Generated announcement: {announcement}")
+                print(f"📢 [{active_model_name.upper()}] {announcement}")
                 tts_manager.announce(announcement)
-            elif confirmed_detections:
-                print(f"⚠️ Confirmed detections but no announcement: {[d['class'] for d in confirmed_detections]}")
-        
-        # Draw confirmed objects with different style
+
+        # Draw confirmed objects
         for det in confirmed_detections:
-            x1, y1, x2, y2 = det['bbox']
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            
-            # Draw thick green box for confirmed objects
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
-            
-            # Add confirmation label
-            label = f"{det['class']} ✓ ({det['visible_for']}s)"
-            cv2.putText(annotated_frame, label, (x1, y1-10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        
-        # Add timer display on frame
+            x1, y1, x2, y2 = [int(v) for v in det['bbox']]
+            colour = (0, 215, 255) if active_model_name == 'currency' else (0, 255, 0)
+            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), colour, 3)
+            cv2.putText(annotated_frame, f"{det['class']} ✓ ({det['visible_for']}s)",
+                        (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
+
+        # Progress-bar timers for unconfirmed objects
+        confirmed_names = {d['class'] for d in confirmed_detections}
         for class_name, data in object_history.items():
-            if class_name not in [d['class'] for d in confirmed_detections]:
-                # Find bbox for timing display
-                matching_det = next((d for d in raw_detections if d['class'] == class_name), None)
-                if matching_det:
-                    x1, y1, x2, y2 = matching_det['coords']
+            if class_name not in confirmed_names:
+                matching = next((d for d in raw_detections if d['class'] == class_name), None)
+                if matching:
+                    x1, y1, x2, y2 = matching['coords']
                     elapsed = current_time - data['first_seen']
-                    
-                    # Draw timing indicator
                     progress = min(elapsed / DETECTION_DELAY, 1.0)
-                    bar_width = int(100 * progress)
-                    
-                    # Draw progress bar
-                    cv2.rectangle(annotated_frame, (x1, y2+5), (x1+bar_width, y2+10), 
-                                 (0, int(255*progress), int(255*(1-progress))), -1)
-                    
-                    # Draw time text
-                    time_text = f"{elapsed:.1f}s/{DETECTION_DELAY}s"
-                    cv2.putText(annotated_frame, time_text, (x1, y2+25),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        
-        # Add info overlay
-        cv2.putText(annotated_frame, f"Delay: {DETECTION_DELAY}s | Hold object steady", 
-                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(annotated_frame, f"Objects tracking: {len(object_history)}", 
-                   (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 0), 2)
-        
+                    bar_w = int(100 * progress)
+                    cv2.rectangle(annotated_frame, (x1, y2+5), (x1+bar_w, y2+10),
+                                  (0, int(255*progress), int(255*(1-progress))), -1)
+                    cv2.putText(annotated_frame, f"{elapsed:.1f}s/{DETECTION_DELAY}s",
+                                (x1, y2+25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 1)
+
+        # HUD
+        mode_label = 'Currency 💰' if active_model_name == 'currency' else 'General'
+        cv2.putText(annotated_frame, f"Mode: {mode_label} | Hold {DETECTION_DELAY}s",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+        cv2.putText(annotated_frame, f"Tracking: {len(object_history)}",
+                    (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 0), 2)
+
         return annotated_frame, confirmed_detections
-        
+
     except Exception as e:
         print(f"Detection error: {e}")
+        import traceback; traceback.print_exc()
         return frame, []
+
 
 def generate_frames():
     """Generate video frames for streaming with object detection"""
     global latest_frame, latest_detections, object_history
     
     while True:
+        # Step 1: Safely copy the latest frame without holding the lock for long
+        current_frame = None
         with frame_lock:
             if latest_frame is not None:
-                # Run object detection on the frame
-                processed_frame, detections = detect_objects(latest_frame.copy())
-                latest_detections = detections  # Store for API access
+                current_frame = latest_frame.copy()
                 
-                # Encode the frame
-                ret, buffer = cv2.imencode('.jpg', processed_frame)
-                frame_bytes = buffer.tobytes()
-            else:
-                # Black frame when no stream - reset tracking
+        # Step 2: Perform heavy operations OUTSIDE the lock
+        if current_frame is not None:
+            # Run object detection on the frame
+            processed_frame, detections = detect_objects(current_frame)
+            
+            # Briefly re-acquire lock to update shared API state
+            with frame_lock:
+                latest_detections = detections
+                
+            # Encode the frame
+            ret, buffer = cv2.imencode('.jpg', processed_frame)
+            frame_bytes = buffer.tobytes()
+        else:
+            # Black frame when no stream - reset tracking
+            with frame_lock:
                 object_history.clear()
-                black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(black_frame, "Waiting for video stream...", 
-                           (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                ret, buffer = cv2.imencode('.jpg', black_frame)
-                frame_bytes = buffer.tobytes()
                 latest_detections = []
+                
+            black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(black_frame, "Waiting for video stream...", 
+                       (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            ret, buffer = cv2.imencode('.jpg', black_frame)
+            frame_bytes = buffer.tobytes()
                 
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
@@ -406,8 +451,8 @@ def upload_frame():
 @app.route('/detect', methods=['POST'])
 def detect_single_image():
     """API endpoint for single image detection"""
-    if model is None:
-        return jsonify({'error': 'Model not loaded', 'success': False}), 500
+    if models.get('general') is None and models.get('currency') is None:
+        return jsonify({'error': 'No model loaded', 'success': False}), 500
     
     try:
         if 'image' not in request.files:
@@ -465,26 +510,31 @@ def get_detections():
 
 @app.route('/model_info')
 def model_info():
-    """Get model information"""
-    if model is None:
-        return jsonify({'error': 'Model not loaded', 'success': False}), 500
-    
+    """Get info for both loaded models"""
+    gen = models.get('general')
+    cur = models.get('currency')
     return jsonify({
         'success': True,
-        'model': 'YOLOv8n',
-        'classes_count': len(model.names),
-        'classes': model.names,
+        'active_model': active_model_display,
+        'general': {
+            'loaded': gen is not None,
+            'classes_count': len(gen.names) if gen else 0,
+        },
+        'currency': {
+            'loaded': cur is not None,
+            'classes_count': len(cur.names) if cur else 0,
+            'classes': list(CURRENCY_CLASSES)
+        },
         'detection_settings': {
             'delay_seconds': DETECTION_DELAY,
             'min_confidence': MIN_CONFIDENCE,
-            'description': f'Objects must be visible for {DETECTION_DELAY} seconds'
+            'mode': 'dual — auto-switches to currency when currency objects detected'
         }
     })
 
 @app.route('/status')
 def status():
     global is_streaming, last_frame_time, object_history
-    # If no frame in 5 seconds, consider disconnected
     if time.time() - last_frame_time > 5:
         is_streaming = False
         object_history.clear()
@@ -492,7 +542,9 @@ def status():
     return jsonify({
         'streaming': is_streaming,
         'detections_count': len(latest_detections),
-        'model_loaded': model is not None,
+        'general_model_loaded': models.get('general') is not None,
+        'currency_model_loaded': models.get('currency') is not None,
+        'active_model': active_model_display,
         'objects_tracking': len(object_history),
         'detection_delay': DETECTION_DELAY
     })
@@ -502,11 +554,24 @@ def reset_tracking():
     """Reset object tracking history"""
     global object_history
     object_history.clear()
-    return jsonify({
-        'success': True,
-        'message': 'Object tracking reset',
-        'tracking_count': 0
-    })
+    return jsonify({'success': True, 'message': 'Object tracking reset'})
+
+@app.route('/set_model', methods=['POST'])
+def set_model():
+    """Toggle between general and currency detection models"""
+    global active_model_name, object_history
+    try:
+        data = request.get_json() or {}
+        name = data.get('model', 'general')
+        if name not in models or models.get(name) is None:
+            return jsonify({'success': False, 'error': f'Model "{name}" not loaded'}), 400
+        active_model_name = name
+        object_history.clear()  # reset tracking on switch
+        print(f"🔄 Switched to {name} model")
+        return jsonify({'success': True, 'active_model': active_model_name})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/tts/toggle', methods=['POST'])
 def tts_toggle():
@@ -576,8 +641,12 @@ def tts_test():
         return jsonify({'error': str(e), 'success': False}), 500
 
 if __name__ == '__main__':
-    # YOUR SPECIFIC IP ADDRESS
-    ip = "10.90.19.240"
+    # BEST - auto-detects your IP
+    import socket
+    ip = socket.gethostbyname(socket.gethostname())
+    # OR manually set it
+    ip = "10.167.7.240"  # ← Your laptop's current IP
+    
     port = 5001
     
     print("=" * 60)

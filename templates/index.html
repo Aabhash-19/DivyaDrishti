@@ -30,6 +30,11 @@
                         <span id="ttsStatusIcon">🔊</span>
                         <span id="ttsStatusText">TTS Ready</span>
                     </div>
+                    <!-- Active Model Badge (auto-updated, read-only) -->
+                    <div class="live-badge" id="activeModelBadge" style="background: rgba(138,43,226,0.2); border:1px solid rgba(138,43,226,0.3);">
+                        <span id="activeModelIcon">🌍</span>
+                        <span id="activeModelText">General</span>
+                    </div>
                     <!-- Dark Mode Toggle -->
                     <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
                         <span class="theme-icon sun-icon" id="themeIcon">☀️</span>
@@ -160,6 +165,22 @@
             </div>
         </div>
 
+        <!-- Model Toggle -->
+        <div class="glass-card" style="margin-top: var(--spacing-lg); text-align: center;">
+            <h3>🤖 Detection Model</h3>
+            <p style="color: var(--text-secondary); margin-bottom: var(--spacing-md);">
+                Active: <strong id="activeModelLabel">General (Objects)</strong>
+            </p>
+            <div class="flex-center" style="gap: var(--spacing-md);">
+                <button class="btn btn-primary" id="modelGeneralBtn" onclick="setModel('general')">
+                    🌍 General Model
+                </button>
+                <button class="btn btn-secondary" id="modelCurrencyBtn" onclick="setModel('currency')">
+                    💰 Currency Model
+                </button>
+            </div>
+        </div>
+
         <!-- Controls -->
         <div class="flex-center" style="gap: var(--spacing-md); margin-top: var(--spacing-lg);">
             <button class="btn btn-secondary" id="resetBtn">
@@ -169,6 +190,7 @@
                 ↻ Refresh Page
             </button>
         </div>
+
     </div>
 
     <!-- JavaScript Files -->
