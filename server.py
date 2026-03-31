@@ -645,7 +645,7 @@ if __name__ == '__main__':
     import socket
     ip = socket.gethostbyname(socket.gethostname())
     # OR manually set it
-    ip = "10.167.7.240"  # ← Your laptop's current IP
+    ip = "10.40.236.110"  # ← Your laptop's current IP
     
     port = 5001
     
