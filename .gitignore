@@ -10,3 +10,6 @@ error_log.txt
 f1_per_class.png
 Model Demo 2.mov
 currency_split
+currency_best.pt 
+yolov8n.pt
+__pycache__
