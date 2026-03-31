@@ -12,3 +12,4 @@ Model Demo 2.mov
 currency_split
 __pycache__/
 *.pt
+.vscode
