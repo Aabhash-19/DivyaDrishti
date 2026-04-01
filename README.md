@@ -1,5 +1,5 @@
 # 🔍 DivyaDrishti
-### AI-Powered Real-Time Object Detection for the Visually Impaired
+### AI-powered Real-Time Object Detection for the Visually Impaired
 
 <div align="center">
 
